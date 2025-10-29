@@ -64,6 +64,37 @@ class FeatureExtractor {
     return sqrt(sumSquaredDiffs / (cleaned.length - 1));
   }
 
+  /// Extract pNN50 (percentage of successive RR intervals differing by more than 50ms)
+  static double extractPnn50(List<double> rrIntervalsMs) {
+    if (rrIntervalsMs.length < 2) return 0.0;
+    
+    // Clean RR intervals
+    final cleaned = _cleanRrIntervals(rrIntervalsMs);
+    if (cleaned.length < 2) return 0.0;
+    
+    // Count successive differences > 50ms
+    int count = 0;
+    for (int i = 1; i < cleaned.length; i++) {
+      if ((cleaned[i] - cleaned[i - 1]).abs() > 50.0) {
+        count++;
+      }
+    }
+    
+    // Return percentage
+    return (count / (cleaned.length - 1)) * 100.0;
+  }
+
+  /// Extract Mean RR interval from RR intervals
+  static double extractMeanRr(List<double> rrIntervalsMs) {
+    if (rrIntervalsMs.isEmpty) return 0.0;
+    
+    // Clean RR intervals
+    final cleaned = _cleanRrIntervals(rrIntervalsMs);
+    if (cleaned.isEmpty) return 0.0;
+    
+    return cleaned.reduce((a, b) => a + b) / cleaned.length;
+  }
+
   /// Extract all features for emotion inference
   static Map<String, double> extractFeatures({
     required List<double> hrValues,
@@ -74,6 +105,8 @@ class FeatureExtractor {
       'hr_mean': extractHrMean(hrValues),
       'sdnn': extractSdnn(rrIntervalsMs),
       'rmssd': extractRmssd(rrIntervalsMs),
+      'pnn50': extractPnn50(rrIntervalsMs),
+      'mean_rr': extractMeanRr(rrIntervalsMs),
     };
 
     // Add motion features if provided
