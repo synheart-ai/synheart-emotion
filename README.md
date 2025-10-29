@@ -1,6 +1,6 @@
 # Synheart Emotion
 
-**On-device emotion inference from biosignals (HR/RR) for Flutter applications**
+**On-device emotion inference from biosignals (HR/RR) for Mobile applications**
 
 [![pub package](https://img.shields.io/pub/v/synheart_emotion.svg)](https://pub.dev/packages/synheart_emotion)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
