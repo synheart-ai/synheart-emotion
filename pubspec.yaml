@@ -11,6 +11,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  flutter_onnxruntime: ^1.5.2
+  path_provider: ^2.1.0
 
 dev_dependencies:
   flutter_test:

@@ -175,33 +175,22 @@ class LinearSvmModel {
 
 /// Default model for emotion inference (v1.0).
 ///
-/// **⚠️ WARNING: This model uses placeholder weights for demonstration purposes only.**
+/// Now uses ONNX-based ExtraTrees model trained on WESAD wrist data.
 ///
-/// The weights in this model are NOT trained on real biosignal data and should
-/// NOT be used in production or clinical settings. They provide a basic
-/// approximation based on physiological principles:
-/// - Higher HR + Lower HRV → Stressed/Amused
-/// - Lower HR + Higher HRV → Calm
+/// ## Features
+///
+/// - Model: ExtraTreesClassifier (ONNX format)
+/// - Features: SDNN, RMSSD, pNN50, Mean_RR, HR_mean
+/// - Classes: Calm, Stressed, Amused
+/// - Dataset: WESAD wrist_all
 ///
 /// ## For Production Use
 ///
-/// You must provide your own trained [LinearSvmModel] with weights derived from:
-/// 1. A properly labeled biosignal dataset
-/// 2. Validated feature engineering pipeline
-/// 3. Rigorous cross-validation and testing
-/// 4. Clinical/research ethics approval
-///
 /// To use a custom model:
 /// ```dart
-/// final customModel = LinearSvmModel.fromArrays(
-///   modelId: 'my_trained_model_v1',
-///   version: '1.0',
-///   labels: ['Amused', 'Calm', 'Stressed'],
-///   featureNames: ['hr_mean', 'sdnn', 'rmssd'],
-///   weights: myTrainedWeights,  // From your ML pipeline
-///   biases: myTrainedBiases,
-///   mu: myNormalizationMeans,
-///   sigma: myNormalizationStdDevs,
+/// final customModel = await OnnxEmotionModel.loadFromAsset(
+///   modelAssetPath: 'assets/ml/my_model.onnx',
+///   metaAssetPath: 'assets/ml/my_model.meta.json',
 /// );
 ///
 /// final engine = EmotionEngine.fromPretrained(
@@ -211,54 +200,17 @@ class LinearSvmModel {
 /// ```
 class DefaultEmotionModel {
   /// Model ID
-  static const String modelId = 'wesad_emotion_v1_0';
+  static const String modelId = 'extratrees_wrist_all_v1_0';
 
   /// Model version
   static const String version = '1.0';
 
   /// Supported emotion labels
-  static const List<String> labels = ['Amused', 'Calm', 'Stressed'];
+  static const List<String> labels = ['Calm', 'Stressed', 'Amused'];
 
   /// Feature names in order
-  static const List<String> featureNames = ['hr_mean', 'sdnn', 'rmssd'];
+  static const List<String> featureNames = ['SDNN', 'RMSSD', 'pNN50', 'Mean_RR', 'HR_mean'];
 
-  /// Create the default model with WESAD-trained parameters
-  static LinearSvmModel createDefault() {
-    // WESAD-trained model parameters (from assets/ml/wesad_emotion_v1_0.json)
-    // These are real trained weights from the WESAD dataset
-    
-    // Weights matrix (3 classes x 3 features) - trained on WESAD
-    final weights = [
-      [0.12, 0.5, 0.3],    // Amused: higher HR, higher HRV
-      [-0.21, -0.4, -0.3], // Calm: lower HR, lower HRV  
-      [0.02, 0.2, 0.1],    // Stressed: slightly higher HR, moderate HRV
-    ];
-    
-    // Bias vector (3 classes) - trained on WESAD
-    final biases = [-0.2, 0.3, 0.1];
-    
-    // Normalization parameters from WESAD training data
-    final mu = {
-      'hr_mean': 72.5,
-      'sdnn': 45.3,
-      'rmssd': 32.1,
-    };
-    
-    final sigma = {
-      'hr_mean': 12.0,
-      'sdnn': 18.7,
-      'rmssd': 12.4,
-    };
-    
-    return LinearSvmModel.fromArrays(
-      modelId: modelId,
-      version: version,
-      labels: labels,
-      featureNames: featureNames,
-      weights: weights,
-      biases: biases,
-      mu: mu,
-      sigma: sigma,
-    );
-  }
+  // Note: The default model is now loaded asynchronously via loadDefault()
+  // This class is kept for backwards compatibility
 }

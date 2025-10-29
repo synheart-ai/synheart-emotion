@@ -31,7 +31,7 @@ class EmotionDemoPage extends StatefulWidget {
 }
 
 class _EmotionDemoPageState extends State<EmotionDemoPage> {
-  late EmotionEngine _engine;
+  EmotionEngine? _engine;
   Timer? _dataTimer;
   Timer? _inferenceTimer;
   
@@ -39,6 +39,7 @@ class _EmotionDemoPageState extends State<EmotionDemoPage> {
   final List<String> _logs = [];
   
   bool _isRunning = false;
+  bool _isLoading = true;
   String _currentEmotion = 'Unknown';
   double _currentConfidence = 0.0;
   Map<String, double> _currentProbabilities = {};
@@ -49,26 +50,44 @@ class _EmotionDemoPageState extends State<EmotionDemoPage> {
     _initializeEngine();
   }
 
-  void _initializeEngine() {
-    _engine = EmotionEngine.fromPretrained(
-      const EmotionConfig(
-        window: Duration(seconds: 60),
-        step: Duration(seconds: 2),
-        minRrCount: 30,
-      ),
-      onLog: (level, message, {context}) {
-        setState(() {
-          _logs.add('[$level] $message');
-          if (_logs.length > 50) {
-            _logs.removeAt(0); // Keep only last 50 logs
-          }
-        });
-      },
-    );
+  Future<void> _initializeEngine() async {
+    try {
+      // Load ONNX model from assets
+      final model = await OnnxEmotionModel.loadFromAsset(
+        modelAssetPath: 'assets/ml/extratrees_wrist_all_v1_0.onnx',
+        metaAssetPath: 'assets/ml/extratrees_wrist_all_v1_0.meta.json',
+      );
+
+      _engine = EmotionEngine.fromPretrained(
+        const EmotionConfig(
+          window: Duration(seconds: 60),
+          step: Duration(seconds: 2),
+          minRrCount: 30,
+        ),
+        model: model,
+        onLog: (level, message, {context}) {
+          setState(() {
+            _logs.add('[$level] $message');
+            if (_logs.length > 50) {
+              _logs.removeAt(0); // Keep only last 50 logs
+            }
+          });
+        },
+      );
+
+      setState(() {
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _logs.add('[error] Failed to load model: $e');
+        _isLoading = false;
+      });
+    }
   }
 
   void _startSimulation() {
-    if (_isRunning) return;
+    if (_isRunning || _engine == null) return;
     
     setState(() {
       _isRunning = true;
@@ -96,6 +115,8 @@ class _EmotionDemoPageState extends State<EmotionDemoPage> {
   }
 
   void _simulateDataPoint() {
+    if (_engine == null) return;
+    
     final random = Random();
     
     // Simulate realistic HR and RR intervals
@@ -110,15 +131,17 @@ class _EmotionDemoPageState extends State<EmotionDemoPage> {
       rrIntervals.add(rr.clamp(400.0, 1200.0));
     }
 
-    _engine.push(
+    _engine!.push(
       hr: hr,
       rrIntervalsMs: rrIntervals,
       timestamp: DateTime.now().toUtc(),
     );
   }
 
-  void _runInference() {
-    final results = _engine.consumeReady();
+  Future<void> _runInference() async {
+    if (_engine == null) return;
+    
+    final results = await _engine!.consumeReady();
     
     for (final result in results) {
       setState(() {
@@ -138,7 +161,7 @@ class _EmotionDemoPageState extends State<EmotionDemoPage> {
       _currentConfidence = 0.0;
       _currentProbabilities.clear();
     });
-    _engine.clear();
+    _engine?.clear();
   }
 
   @override
@@ -149,6 +172,25 @@ class _EmotionDemoPageState extends State<EmotionDemoPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return Scaffold(
+        appBar: AppBar(
+          backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+          title: const Text('Synheart Emotion Demo'),
+        ),
+        body: const Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Loading ONNX model...'),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
@@ -170,7 +212,7 @@ class _EmotionDemoPageState extends State<EmotionDemoPage> {
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
                 ElevatedButton.icon(
-                  onPressed: _isRunning ? null : _startSimulation,
+                  onPressed: (_isRunning || _engine == null) ? null : _startSimulation,
                   icon: const Icon(Icons.play_arrow),
                   label: const Text('Start'),
                 ),
@@ -180,7 +222,7 @@ class _EmotionDemoPageState extends State<EmotionDemoPage> {
                   label: const Text('Stop'),
                 ),
                 ElevatedButton.icon(
-                  onPressed: _clearResults,
+                  onPressed: _engine == null ? null : _clearResults,
                   icon: const Icon(Icons.clear),
                   label: const Text('Clear'),
                 ),
@@ -266,7 +308,7 @@ class _EmotionDemoPageState extends State<EmotionDemoPage> {
                             style: Theme.of(context).textTheme.titleMedium,
                           ),
                           Text(
-                            'Buffer: ${_engine.getBufferStats()['count']} points',
+                            'Buffer: ${_engine?.getBufferStats()['count'] ?? 0} points',
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
                         ],
@@ -334,7 +376,9 @@ class _EmotionDemoPageState extends State<EmotionDemoPage> {
           'RR interval data using the Synheart Emotion library.\n\n'
           'The app generates realistic biometric data and runs emotion inference '
           'every 2 seconds using a 60-second sliding window.\n\n'
+          'Model: ExtraTrees ONNX (WESAD wrist data)\n\n'
           'Features demonstrated:\n'
+          '• ONNX model inference\n'
           '• Real-time emotion detection\n'
           '• Probability visualization\n'
           '• Buffer management\n'

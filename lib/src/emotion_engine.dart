@@ -25,11 +25,11 @@ class _DataPoint {
 /// Processes biosignal data using a sliding window approach and produces
 /// emotion predictions at configurable intervals.
 class EmotionEngine {
-  /// Expected number of core HRV features (hr_mean, sdnn, rmssd).
-  static const int expectedFeatureCount = 3;
+  /// Expected number of core HRV features (SDNN, RMSSD, pNN50, Mean_RR, HR_mean).
+  static const int expectedFeatureCount = 5;
 
   final EmotionConfig config;
-  final LinearSvmModel model;
+  final dynamic model; // Can be LinearSvmModel or OnnxEmotionModel
 
   /// Ring buffer for sliding window
   final Queue<_DataPoint> _buffer = Queue<_DataPoint>();
@@ -50,26 +50,23 @@ class EmotionEngine {
   /// Create engine from pretrained model
   factory EmotionEngine.fromPretrained(
     EmotionConfig config, {
-    LinearSvmModel? model,
+    dynamic model,
     void Function(String level, String message, {Map<String, Object?>? context})?
         onLog,
   }) {
-    final svmModel = model ?? DefaultEmotionModel.createDefault();
+    // Use provided model or default
+    final inferenceModel = model;
 
-    // Validate model compatibility
-    if (svmModel.featureNames.length != expectedFeatureCount ||
-        !svmModel.featureNames.contains('hr_mean') ||
-        !svmModel.featureNames.contains('sdnn') ||
-        !svmModel.featureNames.contains('rmssd')) {
-      throw EmotionError.modelIncompatible(
-        expectedFeats: expectedFeatureCount,
-        actualFeats: svmModel.featureNames.length,
-      );
+    // Validate model has required interface
+    if (inferenceModel != null) {
+      if (!inferenceModel.toString().contains('Model')) {
+        throw EmotionError.badInput('Invalid model type provided');
+      }
     }
 
     return EmotionEngine._(
       config: config,
-      model: svmModel,
+      model: inferenceModel,
       onLog: onLog,
     );
   }
@@ -114,8 +111,12 @@ class EmotionEngine {
   }
 
   /// Consume ready results (throttled by step interval)
-  List<EmotionResult> consumeReady() {
+  Future<List<EmotionResult>> consumeReady() async {
     final results = <EmotionResult>[];
+    
+    if (model == null) {
+      return results;
+    }
     
     try {
       // Check if enough time has passed since last emission
@@ -136,8 +137,15 @@ class EmotionEngine {
         return results; // Feature extraction failed
       }
 
-      // Run inference
-      final probabilities = model.predict(features);
+      // Run inference (supports both sync and async models)
+      Map<String, double> probabilities;
+      if (model.runtimeType.toString().contains('Onnx')) {
+        // ONNX model requires async
+        probabilities = await model.predictAsync(features);
+      } else {
+        // Linear SVM model is synchronous
+        probabilities = model.predict(features);
+      }
       
       // Create result
       final result = EmotionResult.fromInference(

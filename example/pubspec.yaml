@@ -20,3 +20,6 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/ml/extratrees_wrist_all_v1_0.onnx
+    - assets/ml/extratrees_wrist_all_v1_0.meta.json

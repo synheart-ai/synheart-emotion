@@ -63,6 +63,7 @@ export 'src/features.dart';
 // Model inference
 export 'src/model_linear_svm.dart';
 export 'src/json_linear_model.dart';
+export 'src/onnx_model.dart';
 
 // Stream helpers
 export 'src/emotion_stream.dart';
