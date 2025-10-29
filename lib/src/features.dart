@@ -1,8 +1,31 @@
 import 'dart:math';
 
-/// Feature extraction utilities for emotion inference
+/// Feature extraction utilities for emotion inference.
+///
+/// Provides methods for extracting heart rate variability (HRV) metrics
+/// from biosignal data, including HR mean, SDNN, and RMSSD.
 class FeatureExtractor {
-  /// Extract HR mean from a list of HR values
+  /// Minimum valid RR interval in milliseconds (300ms = 200 BPM).
+  static const double minValidRrMs = 300.0;
+
+  /// Maximum valid RR interval in milliseconds (2000ms = 30 BPM).
+  static const double maxValidRrMs = 2000.0;
+
+  /// Maximum allowed jump between successive RR intervals in milliseconds.
+  ///
+  /// This threshold helps detect and remove artifacts from RR interval data.
+  /// A jump > 250ms between consecutive intervals likely indicates noise.
+  static const double maxRrJumpMs = 250.0;
+
+  /// Minimum heart rate value considered valid (in BPM).
+  static const double minValidHr = 30.0;
+
+  /// Maximum heart rate value considered valid (in BPM).
+  static const double maxValidHr = 300.0;
+
+  /// Extract HR mean from a list of HR values.
+  ///
+  /// Returns 0.0 if the input list is empty.
   static double extractHrMean(List<double> hrValues) {
     if (hrValues.isEmpty) return 0.0;
     return hrValues.reduce((a, b) => a + b) / hrValues.length;
@@ -61,24 +84,32 @@ class FeatureExtractor {
     return features;
   }
 
-  /// Clean RR intervals by removing outliers
+  /// Clean RR intervals by removing physiologically invalid values and artifacts.
+  ///
+  /// Removes:
+  /// - RR intervals outside valid range ([minValidRrMs] to [maxValidRrMs])
+  /// - Large jumps between successive intervals (> [maxRrJumpMs])
+  ///
+  /// Returns filtered list of clean RR intervals.
   static List<double> _cleanRrIntervals(List<double> rrIntervalsMs) {
     if (rrIntervalsMs.isEmpty) return [];
-    
+
     final cleaned = <double>[];
     double? prevValue;
-    
+
     for (final rr in rrIntervalsMs) {
-      // Skip outliers: < 300ms or > 2000ms
-      if (rr < 300 || rr > 2000) continue;
-      
-      // Skip large jumps: > 250ms difference from previous
-      if (prevValue != null && (rr - prevValue).abs() > 250) continue;
-      
+      // Skip outliers outside physiological range
+      if (rr < minValidRrMs || rr > maxValidRrMs) continue;
+
+      // Skip large jumps that likely indicate artifacts
+      if (prevValue != null && (rr - prevValue).abs() > maxRrJumpMs) {
+        continue;
+      }
+
       cleaned.add(rr);
       prevValue = rr;
     }
-    
+
     return cleaned;
   }
 

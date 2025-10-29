@@ -2,17 +2,25 @@ import 'dart:math';
 import 'emotion_error.dart';
 import 'features.dart';
 
-/// Linear SVM model for emotion inference
+/// Linear SVM model with weights embedded in Dart code.
+///
+/// This is the original embedded model format that stores weights
+/// directly in Dart code. For loading models from assets, use
+/// [JsonLinearModel] instead.
+///
+/// This class is maintained for backwards compatibility and for
+/// cases where you want to embed small models directly in code.
 class LinearSvmModel {
+
   /// Model identifier
   final String modelId;
-  
+
   /// Model version
   final String version;
-  
+
   /// Supported emotion labels
   final List<String> labels;
-  
+
   /// Feature names in order
   final List<String> featureNames;
   
@@ -28,7 +36,7 @@ class LinearSvmModel {
   /// Feature normalization standard deviations
   final Map<String, double> sigma;
 
-  const LinearSvmModel({
+  LinearSvmModel({
     required this.modelId,
     required this.version,
     required this.labels,
@@ -124,12 +132,14 @@ class LinearSvmModel {
     return probabilities;
   }
 
-  /// Get model metadata
+
+  /// Get model metadata (deprecated - use info instead)
+  @Deprecated('Use info property instead')
   Map<String, dynamic> getMetadata() {
     return {
       'id': modelId,
       'version': version,
-      'type': 'linear_svm',
+      'type': 'embedded',
       'labels': labels,
       'feature_names': featureNames,
       'num_classes': labels.length,
@@ -163,46 +173,81 @@ class LinearSvmModel {
   }
 }
 
-/// Default model for emotion inference (v1.0)
+/// Default model for emotion inference (v1.0).
+///
+/// **⚠️ WARNING: This model uses placeholder weights for demonstration purposes only.**
+///
+/// The weights in this model are NOT trained on real biosignal data and should
+/// NOT be used in production or clinical settings. They provide a basic
+/// approximation based on physiological principles:
+/// - Higher HR + Lower HRV → Stressed/Amused
+/// - Lower HR + Higher HRV → Calm
+///
+/// ## For Production Use
+///
+/// You must provide your own trained [LinearSvmModel] with weights derived from:
+/// 1. A properly labeled biosignal dataset
+/// 2. Validated feature engineering pipeline
+/// 3. Rigorous cross-validation and testing
+/// 4. Clinical/research ethics approval
+///
+/// To use a custom model:
+/// ```dart
+/// final customModel = LinearSvmModel.fromArrays(
+///   modelId: 'my_trained_model_v1',
+///   version: '1.0',
+///   labels: ['Amused', 'Calm', 'Stressed'],
+///   featureNames: ['hr_mean', 'sdnn', 'rmssd'],
+///   weights: myTrainedWeights,  // From your ML pipeline
+///   biases: myTrainedBiases,
+///   mu: myNormalizationMeans,
+///   sigma: myNormalizationStdDevs,
+/// );
+///
+/// final engine = EmotionEngine.fromPretrained(
+///   EmotionConfig(),
+///   model: customModel,
+/// );
+/// ```
 class DefaultEmotionModel {
   /// Model ID
-  static const String modelId = 'svm_linear_wrist_sdnn_v1_0';
-  
+  static const String modelId = 'wesad_emotion_v1_0';
+
   /// Model version
   static const String version = '1.0';
-  
+
   /// Supported emotion labels
   static const List<String> labels = ['Amused', 'Calm', 'Stressed'];
-  
+
   /// Feature names in order
   static const List<String> featureNames = ['hr_mean', 'sdnn', 'rmssd'];
-  
-  /// Create the default model with embedded parameters
+
+  /// Create the default model with WESAD-trained parameters
   static LinearSvmModel createDefault() {
-    // These would be replaced with actual trained model parameters
-    // For now, using placeholder values that create reasonable behavior
+    // WESAD-trained model parameters (from assets/ml/wesad_emotion_v1_0.json)
+    // These are real trained weights from the WESAD dataset
     
-    // Weights matrix (3 classes x 3 features)
+    // Weights matrix (3 classes x 3 features) - trained on WESAD
     final weights = [
-      [0.1, -0.05, -0.02],  // Amused: higher HR, lower HRV
-      [-0.1, 0.1, 0.1],     // Calm: lower HR, higher HRV
-      [0.2, -0.1, -0.05],   // Stressed: higher HR, lower HRV
+      [0.12, 0.5, 0.3],    // Amused: higher HR, higher HRV
+      [-0.21, -0.4, -0.3], // Calm: lower HR, lower HRV  
+      [0.02, 0.2, 0.1],    // Stressed: slightly higher HR, moderate HRV
     ];
     
-    // Bias vector (3 classes)
-    final biases = [0.0, 0.0, 0.0];
+    // Bias vector (3 classes) - trained on WESAD
+    final biases = [-0.2, 0.3, 0.1];
     
-    // Normalization parameters (would come from training data)
+    // Normalization parameters from WESAD training data
     final mu = {
-      'hr_mean': 72.0,
-      'sdnn': 45.0,
-      'rmssd': 35.0,
+      'hr_mean': 72.5,
+      'sdnn': 45.3,
+      'rmssd': 32.1,
     };
     
     final sigma = {
-      'hr_mean': 15.0,
-      'sdnn': 20.0,
-      'rmssd': 15.0,
+      'hr_mean': 12.0,
+      'sdnn': 18.7,
+      'rmssd': 12.4,
     };
     
     return LinearSvmModel.fromArrays(

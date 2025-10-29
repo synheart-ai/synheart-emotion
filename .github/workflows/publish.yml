@@ -1,0 +1,72 @@
+name: Publish to pub.dev
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Perform a dry run without publishing'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+jobs:
+  publish:
+    name: Publish Package
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # Required for OIDC authentication
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.10.0'
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Verify package
+        run: |
+          flutter pub publish --dry-run
+          echo "Package verification completed"
+
+      - name: Check version
+        run: |
+          VERSION=$(grep 'version:' pubspec.yaml | sed 's/version: //')
+          echo "Package version: $VERSION"
+          echo "PACKAGE_VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Run tests
+        run: flutter test
+
+      - name: Run analyzer
+        run: flutter analyze
+
+      - name: Publish to pub.dev (dry-run)
+        if: github.event.inputs.dry-run == 'true'
+        run: flutter pub publish --dry-run
+
+      - name: Publish to pub.dev
+        if: github.event_name == 'release' || github.event.inputs.dry-run == 'false'
+        run: flutter pub publish --force
+
+      - name: Create release summary
+        if: success()
+        run: |
+          echo "## 🚀 Package Published Successfully" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Package**: synheart_emotion" >> $GITHUB_STEP_SUMMARY
+          echo "**Version**: ${{ env.PACKAGE_VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Published to**: https://pub.dev/packages/synheart_emotion" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "View on pub.dev: https://pub.dev/packages/synheart_emotion/versions/${{ env.PACKAGE_VERSION }}" >> $GITHUB_STEP_SUMMARY

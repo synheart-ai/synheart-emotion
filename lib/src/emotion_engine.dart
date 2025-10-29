@@ -20,19 +20,26 @@ class _DataPoint {
   });
 }
 
-/// Main emotion inference engine
+/// Main emotion inference engine.
+///
+/// Processes biosignal data using a sliding window approach and produces
+/// emotion predictions at configurable intervals.
 class EmotionEngine {
+  /// Expected number of core HRV features (hr_mean, sdnn, rmssd).
+  static const int expectedFeatureCount = 3;
+
   final EmotionConfig config;
   final LinearSvmModel model;
-  
+
   /// Ring buffer for sliding window
   final Queue<_DataPoint> _buffer = Queue<_DataPoint>();
-  
+
   /// Last emission timestamp
   DateTime? _lastEmission;
-  
+
   /// Logging callback
-  void Function(String level, String message, {Map<String, Object?>? context})? onLog;
+  void Function(String level, String message, {Map<String, Object?>? context})?
+      onLog;
 
   EmotionEngine._({
     required this.config,
@@ -44,17 +51,18 @@ class EmotionEngine {
   factory EmotionEngine.fromPretrained(
     EmotionConfig config, {
     LinearSvmModel? model,
-    void Function(String level, String message, {Map<String, Object?>? context})? onLog,
+    void Function(String level, String message, {Map<String, Object?>? context})?
+        onLog,
   }) {
     final svmModel = model ?? DefaultEmotionModel.createDefault();
-    
+
     // Validate model compatibility
-    if (svmModel.featureNames.length != 3 || 
+    if (svmModel.featureNames.length != expectedFeatureCount ||
         !svmModel.featureNames.contains('hr_mean') ||
         !svmModel.featureNames.contains('sdnn') ||
         !svmModel.featureNames.contains('rmssd')) {
       throw EmotionError.modelIncompatible(
-        expectedFeats: 3,
+        expectedFeats: expectedFeatureCount,
         actualFeats: svmModel.featureNames.length,
       );
     }
@@ -74,9 +82,9 @@ class EmotionEngine {
     Map<String, double>? motion,
   }) {
     try {
-      // Validate input
-      if (hr <= 0 || hr > 300) {
-        _log('warn', 'Invalid HR value: $hr');
+      // Validate input using physiological constants
+      if (hr < FeatureExtractor.minValidHr || hr > FeatureExtractor.maxValidHr) {
+        _log('warn', 'Invalid HR value: $hr (valid range: ${FeatureExtractor.minValidHr}-${FeatureExtractor.maxValidHr} BPM)');
         return;
       }
 
@@ -194,12 +202,29 @@ class EmotionEngine {
     return features;
   }
 
-  /// Trim buffer to keep only data within window
+  /// Trim buffer to keep only data within window.
+  ///
+  /// Optimized implementation that removes all expired data points
+  /// in a single pass to avoid repeated O(n) removeFirst() calls.
   void _trimBuffer() {
+    if (_buffer.isEmpty) return;
+
     final cutoffTime = DateTime.now().toUtc().subtract(config.window);
-    
-    while (_buffer.isNotEmpty && _buffer.first.timestamp.isBefore(cutoffTime)) {
-      _buffer.removeFirst();
+
+    // Find index of first valid data point
+    int firstValidIndex = 0;
+    for (final point in _buffer) {
+      if (!point.timestamp.isBefore(cutoffTime)) break;
+      firstValidIndex++;
+    }
+
+    // Remove all expired data points at once if any found
+    if (firstValidIndex > 0) {
+      // Rebuild queue with only valid data points (more efficient than repeated removeFirst)
+      final validPoints = _buffer.skip(firstValidIndex).toList();
+      _buffer
+        ..clear()
+        ..addAll(validPoints);
     }
   }
 
