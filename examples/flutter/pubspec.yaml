@@ -10,7 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   synheart_emotion:
-    path: ../
+    path: ../../sdks/flutter
   cupertino_icons: ^1.0.2
 
 dev_dependencies:
