@@ -137,18 +137,18 @@ void main() {
       expect(statsAfter['count'], equals(1));
     });
 
-    test('consumeReady returns empty list when not enough data', () {
+    test('consumeReady returns empty list when not enough data', () async {
       engine.push(
         hr: 70.0,
         rrIntervalsMs: [800.0], // Only 1 RR interval, need 5
         timestamp: DateTime.now().toUtc(),
       );
       
-      final results = engine.consumeReady();
+      final results = await engine.consumeReady();
       expect(results, isEmpty);
     });
 
-    test('consumeReady returns results when enough data', () {
+    test('consumeReady returns results when enough data', () async {
       // Add enough data points
       for (int i = 0; i < 3; i++) {
         engine.push(
@@ -158,7 +158,7 @@ void main() {
         );
       }
       
-      final results = engine.consumeReady();
+      final results = await engine.consumeReady();
       expect(results, isNotEmpty);
       
       final result = results.first;

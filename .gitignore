@@ -107,6 +107,15 @@ nb-configuration.xml
 **/ios/.generated/
 **/ios/ServiceDefinitions.json
 **/ios/Runner/GeneratedPluginRegistrant.*
+**/ios/Podfile.lock
+
+# macOS related
+**/macos/**/Pods/
+**/macos/**/.symlinks/
+**/macos/**/Flutter/ephemeral/
+**/macos/**/Flutter/Flutter-Generated.xcconfig
+**/macos/**/Flutter/Flutter.podspec
+**/macos/Podfile.lock
 
 # Coverage
 coverage/
