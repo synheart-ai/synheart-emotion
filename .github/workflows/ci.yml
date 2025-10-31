@@ -16,6 +16,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Copy models to Flutter assets
+        run: |
+          mkdir -p sdks/flutter/assets/ml
+          cp models/*.json sdks/flutter/assets/ml/ 2>/dev/null || echo "⚠️ No models to copy"
+
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -24,15 +29,19 @@ jobs:
           cache: true
 
       - name: Install dependencies
+        working-directory: sdks/flutter
         run: flutter pub get
 
       - name: Verify formatting
+        working-directory: sdks/flutter
         run: dart format --output=none --set-exit-if-changed .
 
       - name: Analyze code
+        working-directory: sdks/flutter
         run: flutter analyze
 
       - name: Check for outdated dependencies
+        working-directory: sdks/flutter
         run: flutter pub outdated
 
   test:
@@ -43,6 +52,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Copy models to Flutter assets
+        run: |
+          mkdir -p sdks/flutter/assets/ml
+          cp models/*.json sdks/flutter/assets/ml/ 2>/dev/null || echo "⚠️ No models to copy"
+
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -51,15 +65,17 @@ jobs:
           cache: true
 
       - name: Install dependencies
+        working-directory: sdks/flutter
         run: flutter pub get
 
       - name: Run unit tests
+        working-directory: sdks/flutter
         run: flutter test --coverage
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
-          files: ./coverage/lcov.info
+          files: ./sdks/flutter/coverage/lcov.info
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
 
@@ -76,6 +92,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Copy models to Flutter assets
+        run: |
+          mkdir -p sdks/flutter/assets/ml
+          cp models/*.json sdks/flutter/assets/ml/ 2>/dev/null || echo "⚠️ No models to copy"
+
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -84,9 +105,11 @@ jobs:
           cache: true
 
       - name: Install dependencies
+        working-directory: sdks/flutter
         run: flutter pub get
 
       - name: Run tests
+        working-directory: sdks/flutter
         run: flutter test
 
   benchmark:
@@ -105,16 +128,18 @@ jobs:
           cache: true
 
       - name: Install dependencies
+        working-directory: sdks/flutter
         run: flutter pub get
 
       - name: Run benchmark tests
+        working-directory: sdks/flutter
         run: flutter test test/benchmarks_test.dart
 
       - name: Save benchmark results
         uses: actions/upload-artifact@v4
         with:
           name: benchmark-results
-          path: test/benchmarks_test.dart
+          path: sdks/flutter/test/benchmarks_test.dart
           retention-days: 30
 
   package-score:
@@ -133,12 +158,14 @@ jobs:
           cache: true
 
       - name: Install dependencies
+        working-directory: sdks/flutter
         run: flutter pub get
 
       - name: Install pana
         run: flutter pub global activate pana
 
       - name: Run pana analysis
+        working-directory: sdks/flutter
         run: flutter pub global run pana --no-warning --exit-code-threshold 0
 
   build-example:
@@ -156,22 +183,23 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Install dependencies (root)
+      - name: Install dependencies (Flutter SDK)
+        working-directory: sdks/flutter
         run: flutter pub get
 
       - name: Install dependencies (example)
-        working-directory: example
+        working-directory: examples
         run: flutter pub get
 
       - name: Build example app (Android)
-        working-directory: example
+        working-directory: examples
         run: flutter build apk --debug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: example-app-debug
-          path: example/build/app/outputs/flutter-apk/app-debug.apk
+          path: examples/build/app/outputs/flutter-apk/app-debug.apk
           retention-days: 7
 
   security:
@@ -190,12 +218,14 @@ jobs:
           cache: true
 
       - name: Install dependencies
+        working-directory: sdks/flutter
         run: flutter pub get
 
       - name: Check for known security vulnerabilities
+        working-directory: sdks/flutter
         run: |
           flutter pub outdated --mode=null-safety
-          echo "Manual security review recommended for emotion_store.dart encryption"
+          echo "Manual security review recommended"
 
   all-checks-passed:
     name: All Checks Passed

@@ -1,0 +1,4 @@
+# This directory stores model JSON files copied from root/models/
+# Files are copied automatically during build/publish
+# Do not commit JSON files directly here - edit models in root/models/ instead
+

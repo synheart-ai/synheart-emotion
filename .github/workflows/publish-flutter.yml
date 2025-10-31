@@ -1,0 +1,174 @@
+name: Publish Flutter Package to pub.dev
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'  # Matches v1.0.0, v1.2.3, v0.5.0-beta, etc.
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Perform a dry run without publishing'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+# Prevent concurrent runs
+concurrency:
+  group: publish-flutter
+  cancel-in-progress: false
+
+jobs:
+  # Pre-publish checks and tests
+  validate:
+    name: Validate Package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Copy models to Flutter assets
+        run: |
+          mkdir -p sdks/flutter/assets/ml
+          cp models/*.json sdks/flutter/assets/ml/ 2>/dev/null || echo "⚠️ No models to copy (this is OK if using embedded models)"
+          echo "✅ Models copied to Flutter assets"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.10.0'
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        working-directory: sdks/flutter
+        run: flutter pub get
+
+      - name: Check version and publisher
+        working-directory: sdks/flutter
+        id: package-info
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //' | xargs)
+          PUBLISHER=$(grep '^publisher:' pubspec.yaml | sed 's/publisher: //' | xargs || echo "none")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "publisher=$PUBLISHER" >> $GITHUB_OUTPUT
+          echo "Package version: $VERSION"
+          echo "Publisher: $PUBLISHER"
+          echo "PACKAGE_VERSION=$VERSION" >> $GITHUB_ENV
+          echo "PACKAGE_PUBLISHER=$PUBLISHER" >> $GITHUB_ENV
+          
+          if [ "$PUBLISHER" = "none" ]; then
+            echo "⚠️ Warning: No publisher specified in pubspec.yaml"
+          fi
+
+      - name: Run tests
+        working-directory: sdks/flutter
+        run: |
+          # Run tests from both the SDK test directory (if exists) and root test directory
+          if [ -d "test" ]; then
+            flutter test test/
+          fi
+          if [ -d "../../test" ]; then
+            flutter test ../../test/
+          fi
+          # Fallback to default test discovery
+          flutter test
+
+      - name: Run analyzer
+        working-directory: sdks/flutter
+        run: flutter analyze
+
+      - name: Verify package
+        working-directory: sdks/flutter
+        run: flutter pub publish --dry-run
+
+  # Actual publishing using official reusable workflow
+  publish:
+    name: Publish Package
+    needs: validate
+    if: |
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      github.event_name == 'release' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.dry-run == 'false')
+    permissions:
+      id-token: write # Required for OIDC authentication
+      contents: read # Required to checkout code
+    
+    # Use dedicated publishing environment for security
+    # This is required if "Require GitHub Actions environment" is enabled in pub.dev
+    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1
+    with:
+      environment: 'pub-dev'
+      working-directory: 'sdks/flutter'
+
+  # Dry-run job (for manual testing)
+  dry-run:
+    name: Dry Run (Test Publishing)
+    needs: validate
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.dry-run == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Copy models to Flutter assets
+        run: |
+          mkdir -p sdks/flutter/assets/ml
+          cp models/*.json sdks/flutter/assets/ml/ 2>/dev/null || echo "⚠️ No models to copy"
+          echo "✅ Models copied to Flutter assets"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.10.0'
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        working-directory: sdks/flutter
+        run: flutter pub get
+
+      - name: Dry-run publish
+        working-directory: sdks/flutter
+        run: flutter pub publish --dry-run
+
+      - name: Dry-run summary
+        run: |
+          echo "## ✅ Dry-run completed successfully" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Package validation passed. Ready to publish!" >> $GITHUB_STEP_SUMMARY
+
+  # Release summary (runs after publish)
+  summary:
+    name: Create Release Summary
+    needs: [validate, publish]
+    if: always() && (needs.publish.result == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get package info
+        working-directory: sdks/flutter
+        id: package-info
+        run: |
+          VERSION=$(grep '^version:' pubspec.yaml | sed 's/version: //' | xargs)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create release summary
+        run: |
+          VERSION="${{ steps.package-info.outputs.version }}"
+          echo "## 🚀 Package Published Successfully" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Package**: synheart_emotion" >> $GITHUB_STEP_SUMMARY
+          echo "**Version**: $VERSION" >> $GITHUB_STEP_SUMMARY
+          echo "**Publisher**: synheart.ai" >> $GITHUB_STEP_SUMMARY
+          echo "**Published to**: https://pub.dev/packages/synheart_emotion" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "View package: https://pub.dev/packages/synheart_emotion/versions/$VERSION" >> $GITHUB_STEP_SUMMARY
+          echo "Publisher page: https://pub.dev/publishers/synheart.ai/packages" >> $GITHUB_STEP_SUMMARY
+

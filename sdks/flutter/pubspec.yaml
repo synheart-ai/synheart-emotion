@@ -1,0 +1,33 @@
+name: synheart_emotion
+description: On-device emotion inference from biosignals (HR/RR) for Flutter applications. Infers momentary emotions (Amused, Calm, Stressed) from heart rate and RR intervals using WESAD-trained machine learning models.
+version: 0.1.0
+publisher: synheart.ai
+homepage: https://github.com/synheart-ai/synheart-emotion
+repository: https://github.com/synheart-ai/synheart-emotion
+issue_tracker: https://github.com/synheart-ai/synheart-emotion/issues
+license: MIT
+topics:
+  - emotion
+  - biosignals
+  - machine-learning
+  - flutter
+  - health
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+  flutter: ">=3.10.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_lints: ^3.0.0
+  flutter_test:
+    sdk: flutter
+  test: ^1.24.3
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/ml/

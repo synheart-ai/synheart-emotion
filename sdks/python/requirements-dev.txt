@@ -1,0 +1,16 @@
+# Development dependencies
+-r requirements.txt
+
+# Testing
+pytest>=7.0.0
+pytest-cov>=3.0.0
+
+# Code quality
+black>=22.0.0
+isort>=5.10.0
+mypy>=0.950
+
+# ML (optional)
+scikit-learn>=1.0.0
+joblib>=1.1.0
+xgboost>=1.5.0

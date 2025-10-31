@@ -1,0 +1,134 @@
+name: Publish Python Package to PyPI
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Perform a dry run without publishing'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+# Prevent concurrent runs
+concurrency:
+  group: publish-python
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish to PyPI
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # Required for OIDC authentication
+      contents: read # Required to checkout code
+    
+    # Use dedicated publishing environment for security
+    # Set this up in GitHub Settings > Environments > New environment
+    # Name it "pypi" and configure protection rules if needed
+    environment:
+      name: pypi
+      url: https://pypi.org/project/synheart-emotion/
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install build dependencies
+        working-directory: sdks/python
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: Check version
+        working-directory: sdks/python
+        run: |
+          # Extract version from pyproject.toml using Python
+          python << 'EOF'
+          import re
+          import sys
+          import os
+          with open('pyproject.toml', 'r') as f:
+              content = f.read()
+          match = re.search(r'^version\s*=\s*"([^"]+)"', content, re.MULTILINE)
+          if match:
+              version = match.group(1)
+              print(f"Package version: {version}")
+              github_env = os.environ.get('GITHUB_ENV')
+              if github_env:
+                  with open(github_env, "a") as env_file:
+                      env_file.write(f"PACKAGE_VERSION={version}\n")
+                      env_file.write("PYPI_PROJECT_NAME=synheart-emotion\n")
+          else:
+              print("❌ Error: Could not extract version from pyproject.toml")
+              sys.exit(1)
+          EOF
+
+      - name: Copy models to Python package
+        run: |
+          mkdir -p sdks/python/src/synheart_emotion/data
+          cp models/*.json sdks/python/src/synheart_emotion/data/ || echo "No models to copy"
+          echo "✅ Models copied to Python package data directory"
+
+      - name: Install package dependencies
+        working-directory: sdks/python
+        run: |
+          pip install -e .
+
+      - name: Run tests
+        working-directory: sdks/python
+        run: |
+          pip install -e .[dev]
+          pytest tests/ -v
+
+      - name: Build package
+        working-directory: sdks/python
+        run: |
+          python -m build
+
+      - name: Check package
+        working-directory: sdks/python
+        run: |
+          twine check dist/*
+
+      - name: Publish to PyPI (dry-run)
+        if: github.event.inputs.dry-run == 'true' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry-run != 'false')
+        working-directory: sdks/python
+        run: |
+          echo "Running dry-run publish..."
+          twine upload --repository-url https://test.pypi.org/legacy/ dist/* --non-interactive || echo "Dry-run complete (TestPyPI may require authentication)"
+
+      - name: Publish to PyPI
+        if: (github.event_name == 'release') || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry-run == 'false')
+        uses: pypa/gh-action-pypi-publish@release/v1
+        # This action automatically uses OIDC trusted publishing if configured
+        # For API token alternative, uncomment and add password:
+        # with:
+        #   password: ${{ secrets.PYPI_API_TOKEN }}
+        with:
+          skip-existing: true
+          # OIDC is automatically used when environment is configured with trusted publishing
+
+      - name: Create release summary
+        if: success()
+        run: |
+          echo "## 🚀 Python Package Published Successfully" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Package**: ${{ env.PYPI_PROJECT_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Version**: ${{ env.PACKAGE_VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Published to**: https://pypi.org/project/${{ env.PYPI_PROJECT_NAME }}/" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Install with: \`pip install ${{ env.PYPI_PROJECT_NAME }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "View package: https://pypi.org/project/${{ env.PYPI_PROJECT_NAME }}/${{ env.PACKAGE_VERSION }}/" >> $GITHUB_STEP_SUMMARY
+

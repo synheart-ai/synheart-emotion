@@ -1,0 +1,304 @@
+name: Publish iOS SDK to SPM and CocoaPods
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'  # Matches v1.0.0, v1.2.3, v0.5.0-beta, etc.
+      - 'ios-v[0-9]+.[0-9]+.[0-9]+*'  # Matches ios-v1.0.0, ios-v1.2.3, etc.
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Perform a dry run without publishing'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+# Prevent concurrent runs
+concurrency:
+  group: publish-ios
+  cancel-in-progress: false
+
+jobs:
+  # Validation job - runs first
+  validate:
+    name: Validate Package
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Full history for tags
+
+      - name: Check version
+        working-directory: sdks/ios
+        id: version
+        run: |
+          # Extract version from Git tag or release
+          if [ "${{ github.event_name }}" = "release" ]; then
+            VERSION="${{ github.event.release.tag_name }}"
+            # Remove 'v' or 'ios-v' prefix if present
+            VERSION=${VERSION#v}
+            VERSION=${VERSION#ios-v}
+          elif [ "${{ github.event_name }}" = "push" ] && [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+            VERSION=${VERSION#v}
+            VERSION=${VERSION#ios-v}
+          else
+            # Try to get latest tag
+            VERSION=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^\(ios-\)*v//' || echo "0.1.0")
+          fi
+          
+          echo "Version: $VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "PACKAGE_VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Verify Package.swift
+        working-directory: sdks/ios
+        run: |
+          swift package resolve
+          swift package describe --type json > /dev/null || {
+            echo "❌ Error: Package.swift validation failed"
+            exit 1
+          }
+          echo "✅ Package.swift is valid"
+
+      - name: Build package
+        working-directory: sdks/ios
+        run: swift build
+
+      - name: Run tests
+        working-directory: sdks/ios
+        run: swift test
+
+      - name: Verify podspec exists
+        working-directory: sdks/ios
+        run: |
+          if [ ! -f "SynheartEmotion.podspec" ]; then
+            echo "❌ Error: SynheartEmotion.podspec not found"
+            exit 1
+          fi
+          echo "✅ Found SynheartEmotion.podspec"
+
+  # Publish to Swift Package Manager
+  publish-spm:
+    name: Publish to Swift Package Manager
+    needs: validate
+    runs-on: macos-latest
+    if: |
+      github.event_name == 'push' ||
+      github.event_name == 'release' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.dry-run == 'false')
+    permissions:
+      contents: write # Needed to push tags if they don't exist
+    
+    environment:
+      name: spm
+      url: https://github.com/synheart-ai/synheart-emotion
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Full history for tags
+
+      - name: Get version
+        id: version
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Verify Git tag exists (for SPM)
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          # Try both with and without 'v' prefix
+          for TAG in "v$VERSION" "$VERSION" "ios-v$VERSION"; do
+            if git rev-parse "$TAG" >/dev/null 2>&1; then
+              echo "✅ Tag $TAG exists"
+              echo "SPM_TAG=$TAG" >> $GITHUB_ENV
+              break
+            fi
+          done
+          
+          # If no tag found and this is a release, create one
+          if [ -z "$SPM_TAG" ] && [ "${{ github.event_name }}" = "release" ]; then
+            TAG="v$VERSION"
+            echo "Creating tag $TAG for SPM..."
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "Release $TAG"
+            git push origin "$TAG"
+            echo "SPM_TAG=$TAG" >> $GITHUB_ENV
+          fi
+
+      - name: Create release summary (SPM)
+        if: success()
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          echo "## 📦 iOS SDK Published to Swift Package Manager" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Package**: SynheartEmotion" >> $GITHUB_STEP_SUMMARY
+          echo "**Version**: $VERSION" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Swift Package Manager**: https://github.com/synheart-ai/synheart-emotion.git" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Add to Xcode**: File → Add Package Dependencies" >> $GITHUB_STEP_SUMMARY
+          echo "URL: \`https://github.com/synheart-ai/synheart-emotion.git\`" >> $GITHUB_STEP_SUMMARY
+          echo "Version: \`$VERSION\`" >> $GITHUB_STEP_SUMMARY
+
+  # Publish to CocoaPods (runs in parallel with SPM)
+  publish-cocoapods:
+    name: Publish to CocoaPods
+    needs: validate
+    runs-on: macos-latest
+    if: |
+      github.event_name == 'push' ||
+      github.event_name == 'release' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.dry-run == 'false')
+    permissions:
+      contents: read
+    
+    environment:
+      name: cocoapods
+      url: https://cocoapods.org/pods/SynheartEmotion
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Update podspec version
+        working-directory: sdks/ios
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          # Update version in podspec if needed
+          sed -i '' "s/spec.version.*=.*\".*\"/spec.version      = \"$VERSION\"/" SynheartEmotion.podspec || \
+          sed -i "s/spec.version.*=.*\".*\"/spec.version      = \"$VERSION\"/" SynheartEmotion.podspec
+          echo "Updated podspec version to $VERSION"
+          cat SynheartEmotion.podspec | grep "spec.version"
+
+      - name: Setup Ruby and CocoaPods
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.0'
+          bundler-cache: true
+
+      - name: Install CocoaPods
+        run: gem install cocoapods
+
+      - name: Lint podspec
+        working-directory: sdks/ios
+        run: pod spec lint SynheartEmotion.podspec --allow-warnings || echo "Lint warnings (may still publish)"
+
+      - name: Publish to CocoaPods (dry-run)
+        if: github.event.inputs.dry-run == 'true' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry-run != 'false')
+        working-directory: sdks/ios
+        env:
+          COCOAPODS_TRUNK_TOKEN: ${{ secrets.COCOAPODS_TRUNK_TOKEN }}
+        run: |
+          echo "Running CocoaPods dry-run..."
+          pod trunk push SynheartEmotion.podspec --allow-warnings --dry-run || echo "Dry-run complete (may require authentication)"
+
+      - name: Publish to CocoaPods
+        if: |
+          github.event_name == 'push' ||
+          github.event_name == 'release' ||
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.dry-run == 'false')
+        working-directory: sdks/ios
+        env:
+          COCOAPODS_TRUNK_TOKEN: ${{ secrets.COCOAPODS_TRUNK_TOKEN }}
+        run: |
+          if [ -z "$COCOAPODS_TRUNK_TOKEN" ]; then
+            echo "❌ Error: COCOAPODS_TRUNK_TOKEN secret is not set"
+            echo "Please add COCOAPODS_TRUNK_TOKEN to GitHub Secrets"
+            exit 1
+          fi
+          echo "Publishing to CocoaPods..."
+          pod trunk push SynheartEmotion.podspec --allow-warnings
+          echo "✅ Published to CocoaPods!"
+
+      - name: Create release summary (CocoaPods)
+        if: success()
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          echo "## 📦 iOS SDK Published to CocoaPods" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Pod**: SynheartEmotion" >> $GITHUB_STEP_SUMMARY
+          echo "**Version**: $VERSION" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Install**: Add to \`Podfile\`:" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`ruby" >> $GITHUB_STEP_SUMMARY
+          echo "pod 'SynheartEmotion', '~> $VERSION'" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Then run: \`pod install\`" >> $GITHUB_STEP_SUMMARY
+
+  # Combined summary
+  summary:
+    name: Create Release Summary
+    needs: [validate, publish-spm, publish-cocoapods]
+    if: always() && (needs.publish-spm.result == 'success' || needs.publish-cocoapods.result == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create combined summary
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          echo "# 🚀 iOS SDK Published Successfully" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Package**: SynheartEmotion" >> $GITHUB_STEP_SUMMARY
+          echo "**Version**: $VERSION" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ needs.publish-spm.result }}" = "success" ]; then
+            echo "✅ **Swift Package Manager**: Published successfully" >> $GITHUB_STEP_SUMMARY
+            echo "   - URL: \`https://github.com/synheart-ai/synheart-emotion.git\`" >> $GITHUB_STEP_SUMMARY
+            echo "   - Version: \`$VERSION\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ "${{ needs.publish-cocoapods.result }}" = "success" ]; then
+            echo "✅ **CocoaPods**: Published successfully" >> $GITHUB_STEP_SUMMARY
+            echo "   - Pod: \`SynheartEmotion\`" >> $GITHUB_STEP_SUMMARY
+            echo "   - Install: \`pod 'SynheartEmotion', '~> $VERSION'\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # Dry-run job (for testing)
+  dry-run:
+    name: Dry Run (Test Publishing)
+    needs: validate
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.dry-run == 'true'
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.0'
+
+      - name: Install CocoaPods
+        run: gem install cocoapods
+
+      - name: Validate podspec
+        working-directory: sdks/ios
+        run: pod spec lint SynheartEmotion.podspec --allow-warnings
+
+      - name: Dry-run summary
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          echo "## ✅ Dry-run completed successfully" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Package validation passed. Ready to publish!" >> $GITHUB_STEP_SUMMARY
+          echo "Version: $VERSION" >> $GITHUB_STEP_SUMMARY
+

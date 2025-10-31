@@ -1,0 +1,207 @@
+name: Publish Android SDK to Maven Central
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'  # Matches v1.0.0, v1.2.3, v0.5.0-beta, etc.
+      - 'android-v[0-9]+.[0-9]+.[0-9]+*'  # Matches android-v1.0.0, android-v1.2.3, etc.
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: 'Perform a dry run without publishing'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+# Prevent concurrent runs
+concurrency:
+  group: publish-android
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish to Maven Central
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # For OIDC if configured
+    
+    # Use dedicated publishing environment for security
+    environment:
+      name: maven-central
+      url: https://central.sonatype.com/namespace/ai.synheart
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Check version
+        working-directory: sdks/android
+        id: version
+        run: |
+          # Extract version from build.gradle
+          VERSION=$(grep -A 5 'defaultConfig' build.gradle | grep 'versionName' | sed "s/.*versionName \"\(.*\)\".*/\1/" | tr -d ' ')
+          GROUP_ID=$(grep 'groupId =' build.gradle | sed "s/.*groupId = '\(.*\)'.*/\1/" | tr -d ' ')
+          ARTIFACT_ID=$(grep 'artifactId =' build.gradle | sed "s/.*artifactId = '\(.*\)'.*/\1/" | tr -d ' ')
+          
+          echo "Version: $VERSION"
+          echo "Group ID: $GROUP_ID"
+          echo "Artifact ID: $ARTIFACT_ID"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "GROUP_ID=$GROUP_ID" >> $GITHUB_OUTPUT
+          echo "ARTIFACT_ID=$ARTIFACT_ID" >> $GITHUB_OUTPUT
+          echo "PACKAGE_VERSION=$VERSION" >> $GITHUB_ENV
+          echo "GROUP_ID=$GROUP_ID" >> $GITHUB_ENV
+          echo "ARTIFACT_ID=$ARTIFACT_ID" >> $GITHUB_ENV
+          
+          if [ -z "$VERSION" ]; then
+            echo "❌ Error: Could not extract version from build.gradle"
+            exit 1
+          fi
+
+      - name: Setup GPG for signing
+        run: |
+          # Check if GPG key file exists in repository
+          if [ -f "gpg-private-key.asc" ]; then
+            echo "✅ Found GPG key file in repository"
+            # Try to import for key ID verification
+            gpg --batch --import gpg-private-key.asc 2>/dev/null || echo "Could not import for verification"
+          elif [ -n "${{ secrets.GPG_PRIVATE_KEY }}" ]; then
+            echo "✅ Found GPG key in secrets"
+            # Try to import for key ID verification
+            echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import 2>/dev/null || echo "Could not import for verification"
+          else
+            echo "⚠️ Warning: No GPG key found. Artifacts will not be signed."
+          fi
+          
+          # Try to get key ID for verification (optional)
+          GPG_KEY_ID=$(gpg --list-secret-keys --keyid-format LONG 2>/dev/null | grep -E '^sec' | awk '{print $2}' | cut -d'/' -f2 | head -1 || echo "")
+          if [ -n "$GPG_KEY_ID" ]; then
+            echo "✅ GPG key ID: $GPG_KEY_ID"
+          else
+            echo "⚠️ Could not determine GPG key ID (this is OK if key will be provided via secret)"
+          fi
+
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Grant execute permission for gradlew
+        working-directory: sdks/android
+        run: chmod +x gradlew
+
+      - name: Build with Gradle
+        working-directory: sdks/android
+        run: ./gradlew build --no-daemon
+
+      - name: Run tests
+        working-directory: sdks/android
+        run: ./gradlew test --no-daemon
+
+      - name: Build release artifacts (with sources and javadoc)
+        working-directory: sdks/android
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Prepare GPG key for Gradle
+        id: gpg-key
+        run: |
+          # Get GPG key from file or secret and prepare for Gradle
+          if [ -f "gpg-private-key.asc" ]; then
+            GPG_KEY_CONTENT=$(cat gpg-private-key.asc)
+            echo "key_found=true" >> $GITHUB_OUTPUT
+          elif [ -n "${{ secrets.GPG_PRIVATE_KEY }}" ]; then
+            GPG_KEY_CONTENT="${{ secrets.GPG_PRIVATE_KEY }}"
+            echo "key_found=true" >> $GITHUB_OUTPUT
+          else
+            echo "key_found=false" >> $GITHUB_OUTPUT
+            GPG_KEY_CONTENT=""
+          fi
+          
+          # Export as environment variable (multiline handling)
+          if [ -n "$GPG_KEY_CONTENT" ]; then
+            {
+              echo 'GPG_PRIVATE_KEY<<GPG_EOF'
+              echo "$GPG_KEY_CONTENT"
+              echo 'GPG_EOF'
+            } >> $GITHUB_ENV
+          fi
+
+      - name: Publish to Maven Central (dry-run)
+        if: github.event.inputs.dry-run == 'true' || (github.event_name == 'workflow_dispatch' && github.event.inputs.dry-run != 'false')
+        working-directory: sdks/android
+        env:
+          OSSRH_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          OSSRH_PASSWORD: ${{ secrets.OSSRH_PASSWORD }}
+          GPG_PRIVATE_KEY: ${{ env.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          echo "Running dry-run publish..."
+          ./gradlew publishToMavenLocal --no-daemon
+          echo "Dry-run complete - package published to local Maven repository"
+
+      - name: Publish to Maven Central
+        if: |
+          (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
+          github.event_name == 'release' ||
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.dry-run == 'false')
+        working-directory: sdks/android
+        env:
+          OSSRH_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          OSSRH_PASSWORD: ${{ secrets.OSSRH_PASSWORD }}
+          GPG_PRIVATE_KEY: ${{ env.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          if [ -z "$OSSRH_USERNAME" ] || [ -z "$OSSRH_PASSWORD" ]; then
+            echo "❌ Error: OSSRH credentials not set"
+            echo "Please add OSSRH_USERNAME and OSSRH_PASSWORD to GitHub Secrets"
+            exit 1
+          fi
+          echo "Publishing to Maven Central..."
+          ./gradlew publishReleasePublicationToOSSRHRepository --no-daemon
+          echo "✅ Published to Maven Central staging repository!"
+          echo ""
+          echo "⚠️ IMPORTANT: You must manually close and release the staging repository:"
+          echo "1. Go to https://s01.oss.sonatype.org/"
+          echo "2. Login with your Sonatype credentials"
+          echo "3. Navigate to: Staging Repositories"
+          echo "4. Find repository: ai.synheart-*"
+          echo "5. Select it → Close (validates artifacts)"
+          echo "6. After closing succeeds → Release (publishes to Maven Central)"
+          echo "7. Wait ~10 minutes for sync to Maven Central search"
+
+      - name: Create release summary
+        if: success()
+        run: |
+          echo "## 🚀 Android SDK Published Successfully" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Group ID**: ${{ env.GROUP_ID }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Artifact ID**: ${{ env.ARTIFACT_ID }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Version**: ${{ env.PACKAGE_VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Maven Central**: https://central.sonatype.com/artifact/${{ env.GROUP_ID }}/${{ env.ARTIFACT_ID }}/${{ env.PACKAGE_VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Gradle dependency**: \`implementation 'ai.synheart:emotion:${{ env.PACKAGE_VERSION }}'\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "⚠️ **IMPORTANT**: You must manually close and release the staging repository:" >> $GITHUB_STEP_SUMMARY
+          echo "1. Go to https://s01.oss.sonatype.org/ → Staging Repositories" >> $GITHUB_STEP_SUMMARY
+          echo "2. Find repository: \`ai.synheart-*\`" >> $GITHUB_STEP_SUMMARY
+          echo "3. Select → Close (validates) → Release (publishes)" >> $GITHUB_STEP_SUMMARY
+          echo "4. Wait ~10 minutes for sync to Maven Central" >> $GITHUB_STEP_SUMMARY
+
