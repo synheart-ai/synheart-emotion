@@ -1,0 +1,12 @@
+# Requirements for running Python examples
+
+# Install the Synheart Emotion SDK
+# Run from examples/python-example directory:
+#   pip install -e ../../sdks/python
+
+# Or install from PyPI:
+#   pip install synheart-emotion
+
+# Core dependencies (installed with SDK)
+numpy>=1.21.0
+pandas>=1.3.0
